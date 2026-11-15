@@ -42,7 +42,7 @@ td.off{background:rgba(120,120,120,.2)}
 </style>
 </head>
 <body>
-<header><h1>🏃‍♀️ Mon Sport</h1></header>
+<header><h1>🏃‍♀️ Mon Sport</h1><div id="syncStatus" class="muted" style="font-size:.85rem;margin:-4px 0 8px"></div></header>
 <div id="banner" style="display:none;background:#fff3cd;color:#664d03;padding:8px 16px;font-size:.9rem">
   ⚠️ Modifications non exportées : exportez les CSV (onglet « Données ») et remplacez ceux de votre dépôt, sinon elles resteront propres à cet appareil.
 </div>
@@ -82,6 +82,16 @@ td.off{background:rgba(120,120,120,.2)}
 </section>
 
 <section id="t-data">
+  <h3>☁️ Synchronisation Google Sheets</h3>
+  <p class="muted">À renseigner une fois par appareil. Tout est ensuite envoyé et rechargé automatiquement.</p>
+  <div class="row"><input id="syUrl" placeholder="Adresse de l'application web (…/exec)" style="flex:1;min-width:260px"></div>
+  <div class="row"><input id="syKey" type="password" placeholder="Clé secrète" style="flex:1;min-width:200px"></div>
+  <div class="row">
+    <button class="btn primary" onclick="saveSync()">Enregistrer et synchroniser</button>
+    <button class="btn" onclick="forcePull()">⬇️ Recharger depuis Sheets</button>
+    <button class="btn" onclick="forcePush()">⬆️ Écraser Sheets avec cet appareil</button>
+    <button class="btn" onclick="stopSync()">Désactiver</button>
+  </div>
   <h3>🔄 Charger depuis les CSV</h3>
   <p class="muted">Au démarrage, la page lit automatiquement <code>activites_grille.csv</code>, <code>courses_effectuees.csv</code> et <code>suivi_8000pas.csv</code> placés dans le même dossier que <code>index.html</code>.</p>
   <div class="row"><button class="btn primary" onclick="reloadCSV()">🔄 Recharger depuis les CSV</button></div>
@@ -118,10 +128,13 @@ let D=(()=>{try{const d=JSON.parse(localStorage.getItem("monsport"));if(d)return
 D.acts=D.acts||{}; D.courses=D.courses||[]; D.pas=D.pas||{};
 const persist=()=>localStorage.setItem("monsport",JSON.stringify(D));
 // save() = modification faite par l'utilisateur -> marquée "non exportée"
-const save=()=>{D.dirty=true;persist();updateBanner()};
+const save=()=>{D.dirty=true;persist();updateBanner();schedulePush()};
 function updateBanner(){
   const b=$("banner");if(!b)return;
   b.style.display=D.dirty?"block":"none";
+  b.innerHTML=syncOn()
+    ?"⏳ Modifications en cours de synchronisation avec Google Sheets…"
+    :"⚠️ Modifications non exportées : exportez les CSV (onglet « Données ») et remplacez ceux de votre dépôt, sinon elles resteront propres à cet appareil.";
 }
 
 // ---------- onglets ----------
@@ -283,7 +296,7 @@ function download(name,text){
   a.href=URL.createObjectURL(new Blob([text],{type:"text/csv"}));a.download=name;a.click();
 }
 function exportCSV(type){
-  D.dirty=false;persist();updateBanner();
+  if(!syncOn()){D.dirty=false;persist();updateBanner()}
   if(type=="acts"){
     const rows=[["date","sport","km"]];
     Object.keys(D.acts).sort().forEach(k=>{const[d,s]=k.split("|");rows.push([d,s,D.acts[k]])});
@@ -332,7 +345,8 @@ function applyCSV(name,text){
 $("imp").onchange=async e=>{
   const msgs=[];
   for(const f of e.target.files)msgs.push(applyCSV(f.name,await f.text()));
-  persist();updateBanner();$("impMsg").innerHTML=msgs.join("<br>");e.target.value="";
+  if(syncOn()){D.dirty=true;persist();updateBanner();schedulePush()}else persist();
+  $("impMsg").innerHTML=msgs.join("<br>");e.target.value="";
   refreshAll();
 };
 
@@ -365,9 +379,100 @@ async function reloadCSV(){
   await loadFromCSV();
 }
 
+// ---------- Synchronisation Google Sheets (optionnelle) ----------
+let SYNC=(()=>{try{return JSON.parse(localStorage.getItem("monsport_sync"))||{}}catch(e){return{}}})();
+function syncOn(){return !!(SYNC&&SYNC.url&&SYNC.key)}
+const setSync=t=>{const el=$("syncStatus");if(el)el.textContent=t};
+const heure=()=>new Date().toLocaleTimeString("fr-BE",{hour:"2-digit",minute:"2-digit"});
+
+function toPayload(){
+  return{
+    acts:Object.keys(D.acts).sort().map(k=>{const[d,s]=k.split("|");return{date:d,sport:s,km:D.acts[k]}}),
+    courses:D.courses.map(c=>({annee:c.annee,nom:c.nom,distance:c.distance,temps:c.temps})),
+    pas:Object.keys(D.pas).sort().map(d=>({date:d}))
+  };
+}
+function fromPayload(j){
+  D.acts={};(j.acts||[]).forEach(r=>{const d=normDate(r.date),k=parseFloat(r.km);if(d&&k>0)D.acts[d+"|"+String(r.sport).trim()]=k});
+  D.courses=(j.courses||[]).map(r=>({annee:+r.annee,nom:String(r.nom),distance:parseFloat(r.distance)||0,temps:String(r.temps??"")}));
+  D.pas={};(j.pas||[]).forEach(r=>{const d=normDate(r.date);if(d)D.pas[d]=true});
+}
+async function doPull(){
+  const u=SYNC.url+(SYNC.url.includes("?")?"&":"?")+"key="+encodeURIComponent(SYNC.key)+"&t="+Date.now();
+  const r=await fetch(u);const j=await r.json();
+  if(j.error)throw new Error(j.error);
+  return j;
+}
+let pushT=null,pushing=false,again=false;
+function schedulePush(){
+  if(!syncOn())return;
+  setSync("⏳ Synchronisation…");
+  clearTimeout(pushT);pushT=setTimeout(doPush,1500);
+}
+async function doPush(){
+  if(!syncOn())return;
+  if(pushing){again=true;return}
+  pushing=true;
+  try{
+    const r=await fetch(SYNC.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({key:SYNC.key,...toPayload()})});
+    const j=await r.json();
+    if(!j.ok)throw new Error(j.error||"erreur inconnue");
+    if(!again){D.dirty=false;persist()}
+    setSync("✅ Synchronisé avec Google Sheets à "+heure());
+  }catch(e){
+    setSync("⚠️ Synchronisation impossible ("+e.message+"). Vos données sont gardées sur cet appareil et seront renvoyées à la prochaine modification.");
+  }
+  pushing=false;
+  if(again){again=false;schedulePush()}
+  updateBanner();
+}
+async function syncStart(){
+  setSync("⏳ Connexion à Google Sheets…");
+  try{
+    if(D.dirty){await doPush();return}
+    const j=await doPull();
+    const remoteEmpty=!((j.acts||[]).length||(j.courses||[]).length||(j.pas||[]).length);
+    const localHas=Object.keys(D.acts).length||D.courses.length||Object.keys(D.pas).length;
+    if(remoteEmpty){
+      // Tableau vide : première utilisation. On part des données locales, sinon des CSV du dépôt.
+      if(!localHas)await loadFromCSV();
+      if(Object.keys(D.acts).length||D.courses.length||Object.keys(D.pas).length){D.dirty=true;await doPush()}
+      else setSync("✅ Connecté à Google Sheets (tableau vide)");
+    }else{
+      fromPayload(j);D.dirty=false;persist();updateBanner();refreshAll();
+      setSync("✅ Données chargées depuis Google Sheets à "+heure());
+    }
+  }catch(e){
+    setSync("⚠️ Google Sheets injoignable ("+e.message+"). Données locales affichées.");
+  }
+}
+function saveSync(){
+  const url=$("syUrl").value.trim(),key=$("syKey").value.trim();
+  if(!url||!key){alert("Renseignez l'adresse et la clé.");return}
+  SYNC={url,key};localStorage.setItem("monsport_sync",JSON.stringify(SYNC));
+  updateBanner();syncStart();
+}
+function stopSync(){
+  SYNC={};localStorage.removeItem("monsport_sync");
+  $("syUrl").value=$("syKey").value="";setSync("Synchronisation désactivée.");updateBanner();
+}
+async function forcePull(){
+  if(!syncOn()){alert("Synchronisation non configurée.");return}
+  if(D.dirty&&!confirm("Remplacer les modifications non synchronisées par le contenu de Google Sheets ?"))return;
+  try{fromPayload(await doPull());D.dirty=false;persist();updateBanner();refreshAll();setSync("✅ Données rechargées depuis Google Sheets à "+heure())}
+  catch(e){setSync("⚠️ "+e.message)}
+}
+async function forcePush(){
+  if(!syncOn()){alert("Synchronisation non configurée.");return}
+  if(!confirm("Remplacer le contenu de Google Sheets par les données de cet appareil ?"))return;
+  D.dirty=true;await doPush();
+}
+$("syUrl").value=SYNC.url||"";$("syKey").value=SYNC.key||"";
+
 show("cal");
-// Au démarrage : on lit les CSV, sauf s'il reste des modifications locales non exportées
-if(!D.dirty)loadFromCSV();
+if(syncOn())syncStart();
+// Sans synchronisation : on lit les CSV, sauf s'il reste des modifications locales non exportées
+else if(!D.dirty)loadFromCSV();
 else{updateBanner();$("loadMsg").textContent="Modifications locales conservées (non exportées).";}
 </script>
 </body>
