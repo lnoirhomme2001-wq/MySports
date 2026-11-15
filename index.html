@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MonSport</title>
+<link rel="apple-touch-icon" href="logo.png">
+<link rel="icon" type="image/png" href="logo.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#fff;--fg:#222;--muted:#777;--line:#ddd;--card:#f5f6f8;--accent:#e8554e}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1c1e;--fg:#eee;--muted:#999;--line:#3a3a3c;--card:#2a2a2d}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+header{padding:12px 16px 0}
+h1{margin:0 0 8px;font-size:1.5rem}
+nav{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);padding:0 12px}
+nav button{background:none;border:none;color:var(--muted);padding:10px 14px;font-size:1rem;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+nav button.on{color:var(--accent);border-color:var(--accent);font-weight:600}
+main{padding:16px;max-width:1200px;margin:auto}
+section{display:none}section.on{display:block}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+select,input,button.btn{font-size:1rem;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+button.btn{cursor:pointer}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0 18px}
+.card{background:var(--card);border-radius:10px;padding:10px 12px}
+.card .t{color:var(--muted);font-size:.85rem}.card .v{font-size:1.4rem;font-weight:700}.card .s{font-size:.8rem;color:var(--muted)}
+.wk{overflow-x:auto;margin-bottom:16px}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{border:1px solid var(--line);padding:3px 4px;text-align:center;font-size:.9rem}
+th{background:var(--card)}
+td.sp{text-align:left;font-weight:600;white-space:nowrap}
+td input{width:56px;padding:4px;text-align:center;border:none;background:transparent;color:inherit}
+td.off{background:rgba(120,120,120,.2)}
+.chart{margin-bottom:22px;max-width:900px}
+.course{display:grid;grid-template-columns:3fr 1fr 1fr auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+#pasgrid td{width:42px;height:26px;cursor:pointer;color:#fff;font-size:.75rem;user-select:none;padding:0}
+#pasgrid td.oui{background:#2ca02c}#pasgrid td.non{background:#d62728}#pasgrid td.inv{background:#222;cursor:default}
+#pasgrid td.j{background:var(--card);color:var(--fg);font-weight:700;cursor:default}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<header><h1>🏃‍♀️ Mon Sport</h1></header>
+<div id="banner" style="display:none;background:#fff3cd;color:#664d03;padding:8px 16px;font-size:.9rem">
+  ⚠️ Modifications non exportées : exportez les CSV (onglet « Données ») et remplacez ceux de votre dépôt, sinon elles resteront propres à cet appareil.
+</div>
+<nav id="tabs"></nav>
+<main>
+
+<section id="t-cal">
+  <div class="row"><select id="calY"></select><select id="calM"></select></div>
+  <h3 id="calTitle"></h3>
+  <div class="cards" id="calSummary"></div>
+  <div id="calWeeks"></div>
+  <p class="muted">Les modifications sont enregistrées automatiquement dans ce navigateur.</p>
+</section>
+
+<section id="t-bilan">
+  <div class="row"><select id="bilY"></select></div>
+  <div id="bilCharts"></div>
+</section>
+
+<section id="t-evo"><div id="evoCharts"></div></section>
+
+<section id="t-courses">
+  <form id="fCourse" class="row">
+    <select id="cAn"></select>
+    <input id="cNom" placeholder="Nom de la course" required>
+    <input id="cDist" type="number" step="0.1" min="0" placeholder="Distance (km)">
+    <input id="cTemps" placeholder="Temps (1h45 ou 45:30)">
+    <button class="btn primary">Ajouter</button>
+  </form>
+  <div id="cList"></div>
+</section>
+
+<section id="t-pas">
+  <div class="row"><select id="pasY"></select><span id="pasCount" class="muted" style="align-self:center"></span></div>
+  <p class="muted">Cliquez sur un jour pour basculer Oui / Non.</p>
+  <div class="wk"><table id="pasgrid"></table></div>
+</section>
+
+<section id="t-data">
+  <h3>🔄 Charger depuis les CSV</h3>
+  <p class="muted">Au démarrage, la page lit automatiquement <code>activites_grille.csv</code>, <code>courses_effectuees.csv</code> et <code>suivi_8000pas.csv</code> placés dans le même dossier que <code>index.html</code>.</p>
+  <div class="row"><button class="btn primary" onclick="reloadCSV()">🔄 Recharger depuis les CSV</button></div>
+  <p id="loadMsg"></p>
+  <h3>📥 Exporter (CSV)</h3>
+  <div class="row">
+    <button class="btn" onclick="exportCSV('acts')">⬇️ Activités (activites_grille.csv)</button>
+    <button class="btn" onclick="exportCSV('courses')">⬇️ Courses (courses_effectuees.csv)</button>
+    <button class="btn" onclick="exportCSV('pas')">⬇️ 8000 pas (suivi_8000pas.csv)</button>
+  </div>
+  <h3>📤 Importer un CSV à la main</h3>
+  <p class="muted">Secours si le chargement automatique ne marche pas (ex. page ouverte en double-clic). Le type est reconnu automatiquement.</p>
+  <input type="file" id="imp" accept=".csv" multiple>
+  <p id="impMsg"></p>
+</section>
+
+</main>
+<script>
+const SPORTS=["Course","Vélo","Marche","Natation","Musculation","Capoeira","Ping-pong"];
+const MIN_SPORTS=["Musculation","Capoeira","Ping-pong"];
+const ICON={"Course":"🏃‍♀️","Vélo":"🚴‍♂️","Marche":"🚶‍♀️","Natation":"🏊‍♀️","Musculation":"💪","Capoeira":"🤸","Ping-pong":"🏓"};
+const COL={"Course":"44,160,44","Vélo":"31,119,180","Marche":"255,127,14","Natation":"23,190,207","Musculation":"148,103,189","Capoeira":"227,119,194","Ping-pong":"188,189,34"};
+const HEX={"Course":"#2ca02c","Vélo":"#1f77b4","Marche":"#ff7f0e"};
+const MOIS=["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+const MOIS_C=["J","F","M","Av","Mai","Jui","Juil","Ao","S","O","N","D"];
+const JOURS=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+const NOW=new Date(), CY=NOW.getFullYear();
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,"0");
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// ---------- données ----------
+let D=(()=>{try{const d=JSON.parse(localStorage.getItem("monsport"));if(d)return d}catch(e){}return{}})();
+D.acts=D.acts||{}; D.courses=D.courses||[]; D.pas=D.pas||{};
+const persist=()=>localStorage.setItem("monsport",JSON.stringify(D));
+// save() = modification faite par l'utilisateur -> marquée "non exportée"
+const save=()=>{D.dirty=true;persist();updateBanner()};
+function updateBanner(){
+  const b=$("banner");if(!b)return;
+  b.style.display=D.dirty?"block":"none";
+}
+
+// ---------- onglets ----------
+const TABS=[["cal","Calendrier",renderCal],["bilan","Bilan annuel",renderBilan],["evo","Évolution globale",renderEvo],["courses","Courses",renderCourses],["pas","8000pas",renderPas],["data","Données",()=>{}]];
+TABS.forEach(([id,label,fn])=>{
+  const b=document.createElement("button");b.textContent=label;b.dataset.id=id;
+  b.onclick=()=>show(id);$("tabs").appendChild(b);
+});
+function show(id){
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.id==id));
+  document.querySelectorAll("section").forEach(s=>s.classList.toggle("on",s.id=="t-"+id));
+  TABS.find(t=>t[0]==id)[2]();
+}
+const fillSel=(el,opts,val)=>{el.innerHTML=opts.map(([v,l])=>`<option value="${v}">${l}</option>`).join("");el.value=val};
+const yearOpts=(a,b)=>{const r=[];for(let y=a;y<=b;y++)r.push([y,y]);return r};
+
+// ---------- calendrier ----------
+fillSel($("calY"),yearOpts(CY-2,CY+2),CY);
+fillSel($("calM"),MOIS.map((m,i)=>[i,m]),NOW.getMonth());
+$("calY").onchange=$("calM").onchange=renderCal;
+
+function renderCal(){
+  const y=+$("calY").value,m=+$("calM").value,pre=`${y}-${pad(m+1)}-`;
+  $("calTitle").textContent=`📌 Résumé du mois : ${MOIS[m]} ${y}`;
+  // résumé
+  $("calSummary").innerHTML=SPORTS.map(s=>{
+    let tot=0,n=0;
+    for(const k in D.acts){if(k.startsWith(pre)&&k.endsWith("|"+s)&&D.acts[k]>0){tot+=D.acts[k];n++}}
+    const unit=MIN_SPORTS.includes(s)?" min":" km";
+    return `<div class="card"><div class="t">${ICON[s]} ${s}</div><div class="v">${tot.toFixed(MIN_SPORTS.includes(s)?0:1)}${unit}</div><div class="s">${n} séance(s)</div></div>`;
+  }).join("");
+  // semaines
+  const first=(new Date(y,m,1).getDay()+6)%7,nd=new Date(y,m+1,0).getDate();
+  const weeks=[];let w=Array(7).fill(0),pos=first;
+  for(let d=1;d<=nd;d++){w[pos++]=d;if(pos==7){weeks.push(w);w=Array(7).fill(0);pos=0}}
+  if(pos>0)weeks.push(w);
+  $("calWeeks").innerHTML=weeks.map(wk=>{
+    let h=`<div class="wk"><table><tr><th>Sport</th>${wk.map((d,i)=>`<th>${JOURS[i]} ${d?pad(d):"--"}</th>`).join("")}<th>Total</th><th>Nb</th></tr>`;
+    for(const s of SPORTS){
+      let tot=0,nb=0,c=COL[s];
+      let cells=wk.map(d=>{
+        if(!d)return `<td class="off"></td>`;
+        const date=pre+pad(d),v=D.acts[date+"|"+s]||0;
+        if(v>0){tot+=v;nb++}
+        return `<td style="${v>0?`background:rgba(${c},.35)`:""}"><input type="number" min="0" step="0.5" data-k="${date}|${s}" value="${v>0?v:""}" placeholder="0"></td>`;
+      }).join("");
+      const u=MIN_SPORTS.includes(s)?"min":"km";
+      h+=`<tr><td class="sp" style="background:rgba(${c},.35)">${s}</td>${cells}<td style="background:rgba(${c},.35)">${tot.toFixed(MIN_SPORTS.includes(s)?0:1)} ${u}</td><td style="background:rgba(${c},.35)">${nb}</td></tr>`;
+    }
+    return h+"</table></div>";
+  }).join("");
+}
+$("calWeeks").addEventListener("change",e=>{
+  const i=e.target;if(!i.dataset.k)return;
+  const v=parseFloat(i.value);
+  if(v>0)D.acts[i.dataset.k]=v;else delete D.acts[i.dataset.k];
+  save();renderCal();
+});
+
+// ---------- graphiques ----------
+const charts={};
+function bar(id,labels,data,title,color){
+  if(charts[id])charts[id].destroy();
+  charts[id]=new Chart($(id),{type:"bar",
+    data:{labels,datasets:[{data,backgroundColor:color}]},
+    options:{responsive:true,plugins:{legend:{display:false},title:{display:true,text:title,align:"start",font:{size:15}}},scales:{y:{beginAtZero:true}}}});
+}
+function chartBox(host,id){const d=document.createElement("div");d.className="chart";d.innerHTML=`<canvas id="${id}"></canvas>`;host.appendChild(d)}
+
+function renderBilan(){
+  const years=new Set([CY]);for(const k in D.acts)years.add(+k.slice(0,4));
+  const list=[...years].sort((a,b)=>b-a),sel=$("bilY");
+  const cur=sel.value||CY;fillSel(sel,list.map(y=>[y,y]),list.includes(+cur)?cur:CY);
+  sel.onchange=renderBilan;
+  const y=+sel.value;$("bilCharts").innerHTML="";
+  ["Course","Vélo","Marche"].forEach(s=>{
+    const mo=Array(12).fill(0);
+    for(const k in D.acts)if(k.startsWith(y+"-")&&k.endsWith("|"+s))mo[+k.slice(5,7)-1]+=D.acts[k];
+    chartBox($("bilCharts"),"bil_"+s);
+    bar("bil_"+s,MOIS,mo.map(v=>+v.toFixed(1)),`${s.toUpperCase()} ${y} (km)`,HEX[s]);
+  });
+}
+function renderEvo(){
+  $("evoCharts").innerHTML="";
+  ["Course","Vélo","Marche"].forEach(s=>{
+    const by={};
+    for(const k in D.acts)if(k.endsWith("|"+s)){const y=k.slice(0,4);by[y]=(by[y]||0)+D.acts[k]}
+    if(!Object.keys(by).length)by[CY]=0;
+    const ys=Object.keys(by).sort();
+    chartBox($("evoCharts"),"evo_"+s);
+    bar("evo_"+s,ys,ys.map(y=>+by[y].toFixed(1)),`Évolution ${s.toLowerCase()} (km)`,HEX[s]);
+  });
+}
+
+// ---------- courses ----------
+fillSel($("cAn"),yearOpts(2021,CY+1).reverse(),CY);
+$("fCourse").onsubmit=e=>{
+  e.preventDefault();
+  D.courses.push({annee:+$("cAn").value,nom:$("cNom").value.trim(),distance:parseFloat($("cDist").value)||0,temps:$("cTemps").value.trim()});
+  save();e.target.reset();$("cAn").value=CY;renderCourses();
+};
+function renderCourses(){
+  if(!D.courses.length){$("cList").innerHTML='<p class="muted">Aucune course enregistrée pour le moment.</p>';return}
+  const years=[...new Set(D.courses.map(c=>c.annee))].sort((a,b)=>b-a);
+  $("cList").innerHTML=years.map(y=>`<h3>Année ${y}</h3>`+D.courses.map((c,i)=>[c,i]).filter(([c])=>c.annee==y).map(([c,i])=>
+    `<div class="course"><b>${esc(c.nom)}</b><span>📍 ${c.distance} km</span><span>⏱️ ${esc(c.temps)}</span><button class="btn" data-del="${i}" title="Supprimer">🗑️</button></div>`).join("")).join("");
+}
+$("cList").addEventListener("click",e=>{
+  const i=e.target.dataset.del;if(i===undefined)return;
+  D.courses.splice(+i,1);save();renderCourses();
+});
+
+// ---------- 8000 pas ----------
+fillSel($("pasY"),yearOpts(2026,Math.max(CY,2026)+1).reverse(),Math.max(CY,2026));
+$("pasY").onchange=renderPas;
+function renderPas(){
+  const y=+$("pasY").value;let n=0;
+  let h=`<tr><th></th>${MOIS_C.map(m=>`<th>${m}</th>`).join("")}</tr>`;
+  for(let j=1;j<=31;j++){
+    h+=`<tr><td class="j">${j}</td>`;
+    for(let m=1;m<=12;m++){
+      const valid=new Date(y,m-1,j).getMonth()==m-1;
+      if(!valid){h+=`<td class="inv"></td>`;continue}
+      const k=`${y}-${pad(m)}-${pad(j)}`,oui=!!D.pas[k];if(oui)n++;
+      h+=`<td class="${oui?"oui":"non"}" data-k="${k}">${oui?"Oui":"Non"}</td>`;
+    }
+    h+="</tr>";
+  }
+  $("pasgrid").innerHTML=h;
+  $("pasCount").textContent=`${n} jour(s) validé(s) en ${y}`;
+}
+$("pasgrid").addEventListener("click",e=>{
+  const k=e.target.dataset.k;if(!k)return;
+  if(D.pas[k])delete D.pas[k];else D.pas[k]=true;
+  save();
+  e.target.className=D.pas[k]?"oui":"non";e.target.textContent=D.pas[k]?"Oui":"Non";
+  const y=$("pasY").value;
+  $("pasCount").textContent=`${Object.keys(D.pas).filter(x=>x.startsWith(y+"-")).length} jour(s) validé(s) en ${y}`;
+});
+
+// ---------- CSV ----------
+function parseCSV(t){
+  const rows=[];let r=[],f="",q=false;
+  t=t.replace(/^\uFEFF/,"");
+  for(let i=0;i<t.length;i++){
+    const c=t[i];
+    if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
+    else if(c=='"')q=true;
+    else if(c==","){r.push(f);f=""}
+    else if(c=="\n"||c=="\r"){if(c=="\r"&&t[i+1]=="\n")i++;r.push(f);f="";if(r.some(x=>x!==""))rows.push(r);r=[]}
+    else f+=c;
+  }
+  r.push(f);if(r.some(x=>x!==""))rows.push(r);
+  return rows;
+}
+const toCSV=rows=>rows.map(r=>r.map(v=>{v=String(v??"");return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}).join(",")).join("\n");
+function download(name,text){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{type:"text/csv"}));a.download=name;a.click();
+}
+function exportCSV(type){
+  D.dirty=false;persist();updateBanner();
+  if(type=="acts"){
+    const rows=[["date","sport","km"]];
+    Object.keys(D.acts).sort().forEach(k=>{const[d,s]=k.split("|");rows.push([d,s,D.acts[k]])});
+    download("activites_grille.csv",toCSV(rows));
+  }else if(type=="courses"){
+    download("courses_effectuees.csv",toCSV([["annee","nom","distance","temps"],...D.courses.map(c=>[c.annee,c.nom,c.distance,c.temps])]));
+  }else{
+    const years=[...new Set(Object.keys(D.pas).map(k=>+k.slice(0,4)).concat([Math.max(CY,2026)]))].sort();
+    const rows=[["annee","jour",...MOIS]];
+    years.forEach(y=>{for(let j=1;j<=31;j++){
+      rows.push([y,j,...MOIS.map((_,m)=>new Date(y,m,j).getMonth()!=m?"Non":(D.pas[`${y}-${pad(m+1)}-${pad(j)}`]?"Oui":"Non"))]);
+    }});
+    download("suivi_8000pas.csv",toCSV(rows));
+  }
+}
+function normDate(s){
+  s=String(s).trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);
+  const m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/);
+  if(m)return `${m[3]}-${pad(m[2])}-${pad(m[1])}`;
+  const d=new Date(s);return isNaN(d)?null:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+// Applique le contenu d'un CSV (type reconnu automatiquement). Renvoie un message.
+function applyCSV(name,text){
+  const rows=parseCSV(text);if(rows.length<2)return `⚠️ ${name} : vide`;
+  const head=rows[0].map(h=>h.toLowerCase().trim()),col=n=>head.indexOf(n),body=rows.slice(1);
+  if(col("sport")>=0&&col("date")>=0){
+    D.acts={};let n=0;
+    body.forEach(r=>{const d=normDate(r[col("date")]),k=parseFloat(r[col("km")]);if(d&&k>0){D.acts[d+"|"+r[col("sport")].trim()]=k;n++}});
+    return `✅ ${name} : ${n} activités`;
+  }
+  if(col("nom")>=0&&col("annee")>=0&&col("jour")<0){
+    D.courses=body.map(r=>({annee:+r[col("annee")],nom:r[col("nom")],distance:parseFloat(r[col("distance")])||0,temps:r[col("temps")]||""}));
+    return `✅ ${name} : ${D.courses.length} courses`;
+  }
+  if(col("jour")>=0&&col("annee")>=0){
+    D.pas={};let n=0;
+    body.forEach(r=>MOIS.forEach((mn,m)=>{const c=col(mn.toLowerCase());
+      if(c>=0&&String(r[c]).trim()=="Oui"){D.pas[`${+r[col("annee")]}-${pad(m+1)}-${pad(+r[col("jour")])}`]=true;n++}}));
+    return `✅ ${name} : ${n} jours validés`;
+  }
+  return `⚠️ ${name} : format non reconnu`;
+}
+
+// Import manuel (secours)
+$("imp").onchange=async e=>{
+  const msgs=[];
+  for(const f of e.target.files)msgs.push(applyCSV(f.name,await f.text()));
+  persist();updateBanner();$("impMsg").innerHTML=msgs.join("<br>");e.target.value="";
+  refreshAll();
+};
+
+// Chargement automatique depuis les CSV hébergés à côté de index.html
+const CSV_SOURCES=[["activites_grille.csv","activites_grilles.csv"],["courses_effectuees.csv"],["suivi_8000pas.csv"]];
+async function fetchCSV(names){
+  for(const n of names){
+    try{
+      const r=await fetch(n+"?t="+Date.now(),{cache:"no-store"});
+      if(r.ok)return [n,await r.text()];
+    }catch(e){}
+  }
+  return null;
+}
+async function loadFromCSV(){
+  const out=[];
+  const res=await Promise.all(CSV_SOURCES.map(fetchCSV));
+  res.forEach((r,i)=>out.push(r?applyCSV(r[0],r[1]):`⚠️ ${CSV_SOURCES[i][0]} introuvable`));
+  if(res.some(Boolean)){D.dirty=false;persist()}
+  updateBanner();
+  $("loadMsg").innerHTML=out.join("<br>");
+  refreshAll();
+  return res.some(Boolean);
+}
+function refreshAll(){
+  const on=document.querySelector("nav button.on");if(on)show(on.dataset.id);
+}
+async function reloadCSV(){
+  if(D.dirty&&!confirm("Vous avez des modifications non exportées. Les remplacer par le contenu des CSV ?"))return;
+  await loadFromCSV();
+}
+
+show("cal");
+// Au démarrage : on lit les CSV, sauf s'il reste des modifications locales non exportées
+if(!D.dirty)loadFromCSV();
+else{updateBanner();$("loadMsg").textContent="Modifications locales conservées (non exportées).";}
+</script>
+</body>
+</html>
